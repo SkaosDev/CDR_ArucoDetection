@@ -44,7 +44,10 @@ try:
 except Exception:
     CAMERA_ID = CAMERA_ID_RAW
 
-print(f"DEBUG: IMAGE_DIR={IMAGE_DIR}, IMAGE_EXT={IMAGE_EXT}, CAMERA_ID={CAMERA_ID}, MAX_IMAGE={MAX_IMAGE}, WIDTH={CAMERA_WIDTH}, HEIGHT={CAMERA_HEIGHT}")
+MARKER_SIZE_CM = float(os.getenv("MARKER_SIZE_CM") or "2.4")
+ASSUMED_HFOV_DEG = float(os.getenv("ASSUMED_HFOV_DEG") or "90.0")
+
+print(f"DEBUG: IMAGE_DIR={IMAGE_DIR}, IMAGE_EXT={IMAGE_EXT}, CAMERA_ID={CAMERA_ID}, MAX_IMAGE={MAX_IMAGE}, WIDTH={CAMERA_WIDTH}, HEIGHT={CAMERA_HEIGHT}, MARKER_SIZE_CM={MARKER_SIZE_CM}, HFOV={ASSUMED_HFOV_DEG}")
 
 def update_in_real_time():
     # ensure folder exists
@@ -53,7 +56,7 @@ def update_in_real_time():
 
     # init camera
     camera = Camera(CAMERA_ID, IMAGE_DIR, IMAGE_EXT, width=CAMERA_WIDTH, height=CAMERA_HEIGHT)
-    detector = ArucoDetector(camera)
+    detector = ArucoDetector(camera, MARKER_SIZE_CM, camera_matrix=None, dist_coeffs=None, assumed_hfov_deg=ASSUMED_HFOV_DEG)
 
     try:
         if not camera.is_opened():
