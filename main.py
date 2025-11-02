@@ -26,17 +26,27 @@ from src.detection import ArucoDetector
 env_path = Path(".env")
 load_dotenv(dotenv_path=env_path)
 
+def parse_int_env(name, default=None):
+    """
+    Parse an integer environment variable with a default fallback.
+    """
+    v = os.getenv(name)
+    if v is None:
+        return default
+    try:
+        return int(v)
+    except Exception:
+        return default
+
 # read env with sensible defaults
 IMAGE_DIR = os.getenv("IMAGE_DIR") or "captured_images"
 IMAGE_EXT = os.getenv("IMAGE_EXT") or "jpg"
 CAMERA_ID_RAW = os.getenv("CAMERA_ID", "0")
-MAX_IMAGE = int(os.getenv("MAX_IMAGE") or 50)
+MAX_IMAGE = parse_int_env("MAX_IMAGE", 50)
 
 # optional requested resolution from env
-_cam_w = os.getenv("CAMERA_WIDTH")
-_cam_h = os.getenv("CAMERA_HEIGHT")
-CAMERA_WIDTH = int(_cam_w) if _cam_w and _cam_w.isdigit() else None
-CAMERA_HEIGHT = int(_cam_h) if _cam_h and _cam_h.isdigit() else None
+CAMERA_WIDTH = parse_int_env("CAMERA_WIDTH", None)
+CAMERA_HEIGHT = parse_int_env("CAMERA_HEIGHT", None)
 
 # parse camera id (try int, else keep as string path)
 try:
@@ -50,6 +60,10 @@ ASSUMED_HFOV_DEG = float(os.getenv("ASSUMED_HFOV_DEG") or "90.0")
 print(f"DEBUG: IMAGE_DIR={IMAGE_DIR}, IMAGE_EXT={IMAGE_EXT}, CAMERA_ID={CAMERA_ID}, MAX_IMAGE={MAX_IMAGE}, WIDTH={CAMERA_WIDTH}, HEIGHT={CAMERA_HEIGHT}, MARKER_SIZE_CM={MARKER_SIZE_CM}, HFOV={ASSUMED_HFOV_DEG}")
 
 def update_in_real_time():
+    """
+    Capture images from camera in real-time, analyze them for Aruco markers,
+    and display the results. Cleans up images after use.
+    """
     # ensure folder exists
     os.makedirs(IMAGE_DIR, exist_ok=True)
     clear_image_folder(IMAGE_DIR)
@@ -63,7 +77,7 @@ def update_in_real_time():
             print("Error: camera not opened")
             return
 
-        info = camera.get_camera_info() if hasattr(camera, "get_camera_info") else {}
+        info = camera.get_camera_info()
         print(f"Camera info: {info}")
 
         cv2.namedWindow("Image", cv2.WINDOW_NORMAL)

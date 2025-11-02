@@ -20,15 +20,15 @@ class Camera:
         self.warmup_frames = warmup_frames
         self.cam = None
         self._backend_used = None
-        # prefer useful Windows backends if available
-        default_backends = []
+
+        # simplify backend list construction
         if backends is not None:
             default_backends = backends
         else:
-            if hasattr(cv2, "CAP_DSHOW"):
-                default_backends.append(cv2.CAP_DSHOW)
-            if hasattr(cv2, "CAP_MSMF"):
-                default_backends.append(cv2.CAP_MSMF)
+            default_backends = []
+            for attr in ("CAP_DSHOW", "CAP_MSMF"):
+                if hasattr(cv2, attr):
+                    default_backends.append(getattr(cv2, attr))
             default_backends.append(cv2.CAP_ANY)
 
         self._open_with_backends(self.camera_id, default_backends)
@@ -53,6 +53,9 @@ class Camera:
                 print(f"No detected resolution, tried default | actual: {actual[0]}x{actual[1]}")
 
     def _open_with_backends(self, camera_id, backends: List[int]):
+        """
+        Try to open camera with multiple backends.
+        """
         # try multiple backends to get best behavior on Windows
         for b in backends:
             try:
@@ -60,33 +63,43 @@ class Camera:
                     cap = cv2.VideoCapture(camera_id)
                 else:
                     cap = cv2.VideoCapture(camera_id, b)
-                if cap and cap.isOpened():
+                if cap is not None and cap.isOpened():
                     self.cam = cap
                     self._backend_used = b
                     return
-                else:
-                    try:
+                # ensure release if opened failed
+                try:
+                    if cap is not None:
                         cap.release()
-                    except Exception:
-                        pass
+                except Exception:
+                    pass
             except Exception:
                 pass
         # final attempt with plain constructor
         try:
             cap = cv2.VideoCapture(camera_id)
-            if cap and cap.isOpened():
+            if cap is not None and cap.isOpened():
                 self.cam = cap
                 self._backend_used = None
         except Exception:
             self.cam = None
 
     def get_file_info(self):
+        """
+        Get image storage info (directory, extension).
+        """
         return self.image_dir, self.file_ext
 
     def is_opened(self) -> bool:
-        return bool(self.cam and self.cam.isOpened())
+        """
+        Check if camera is opened.
+        """
+        return self.cam is not None and self.cam.isOpened()
 
     def get_resolution(self) -> Tuple[int, int]:
+        """
+        Get current camera resolution (width, height).
+        """
         if not self.is_opened():
             return (0, 0)
         w = int(self.cam.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
@@ -94,6 +107,9 @@ class Camera:
         return (w, h)
 
     def get_camera_info(self):
+        """
+        Get camera properties as a dictionary.
+        """
         if not self.is_opened():
             return {}
         w, h = self.get_resolution()
@@ -106,8 +122,13 @@ class Camera:
         return {"width": w, "height": h, "fps": fps, "fourcc": fourcc, "backend": self._backend_used}
 
     def _warmup_and_read(self, frames: int = None):
+        """
+        Read frames to warmup camera.
+        """
         if frames is None:
             frames = self.warmup_frames
+        if not self.cam:
+            return
         for _ in range(frames):
             try:
                 self.cam.read()
@@ -115,7 +136,9 @@ class Camera:
                 pass
 
     def set_resolution(self, width: int, height: int) -> Tuple[int, int]:
-        """Try to set resolution; perform a small warmup and return actual resolution."""
+        """
+        Try to set resolution; perform a small warmup and return actual resolution.
+        """
         if not self.is_opened():
             return (0, 0)
         # apply settings
@@ -128,6 +151,9 @@ class Camera:
         return self.get_resolution()
 
     def adapt_resolution(self, target_width: int, target_height: int, fallbacks: Optional[List[Tuple[int,int]]] = None) -> Tuple[int,int]:
+        """
+        Try to set requested resolution; if not possible, try fallbacks.
+        """
         if not self.is_opened():
             return (0, 0)
 
@@ -149,6 +175,9 @@ class Camera:
         return self.get_resolution()
 
     def take_picture(self):
+        """
+        Capture an image and save it to disk; return file path or None on error.
+        """
         if not self.is_opened():
             print("Error: camera not opened - Cannot take picture")
             return None
@@ -158,12 +187,14 @@ class Camera:
             return None
         os.makedirs(self.image_dir, exist_ok=True)
         file_id = str(time.time()).replace(".", "_")
-        file_path = os.path.join(self.image_dir, file_id + "." + self.file_ext)
+        file_path = os.path.join(self.image_dir, f"{file_id}.{self.file_ext}")
         cv2.imwrite(file_path, frame)
-        print(f"Picture saved at {file_path}")
         return file_path
 
     def release(self):
+        """
+        Release camera resources.
+        """
         if self.cam:
             try:
                 self.cam.release()

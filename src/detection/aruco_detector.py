@@ -69,6 +69,10 @@ class ArucoDetector:
         return rvecs_np, tvecs_np
 
     def analyze_image(self, image_id):
+        """
+        Analyze a single image for Aruco markers, estimate their distance,
+        and display the results.
+        """
         path = f"{self.image_dir}/{image_id}.{self.file_ext}"
         image = cv2.imread(path)
         if image is None:

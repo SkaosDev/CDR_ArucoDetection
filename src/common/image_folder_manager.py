@@ -1,6 +1,9 @@
 import os
 
 def clear_image_folder(folder_name):
+    """
+    Remove all files in the specified folder.
+    """
     if not os.path.exists(folder_name):
         print(f"Folder '{folder_name}' don't exist.")
         return
@@ -13,9 +16,11 @@ def clear_image_folder(folder_name):
         except Exception as e:
             print(f"Error: unable to remove image at {file_path}: {e}")
 
-    print(f"All file in '{folder_name}' have been deleted.")
-
 def clear_old_images(folder_name, max_images_in_folder):
+    """
+    Remove oldest images in the specified folder
+    until the number of images is less than or equal to max_images_in_folder.
+    """
     if not os.path.exists(folder_name):
         print(f"Error: Folder '{folder_name}' don't exist.")
         return
@@ -27,6 +32,5 @@ def clear_old_images(folder_name, max_images_in_folder):
         file_to_remove = files.pop(0)
         try:
             os.remove(file_to_remove)
-            print(f"Removed old image: {file_to_remove}")
         except Exception as e:
             print(f"Error: unable to remove image at {file_to_remove}: {e}")
