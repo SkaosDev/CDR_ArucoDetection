@@ -92,7 +92,7 @@ class ArucoDetector:
 
         cv2.aruco.drawDetectedMarkers(image, corners, ids)
 
-        # if camera_matrix available, use estimatePoseSingleMarkers
+        # if camera_matrix available, use estimate_pose_single_markers_fallback
         use_pose = self.camera_matrix is not None and self.dist_coeffs is not None
         if use_pose:
             # markerSize in meters

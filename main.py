@@ -2,6 +2,7 @@ import cv2
 import time
 import os
 from pathlib import Path
+import numpy as np
 
 # try to import load_dotenv, fallback to tiny loader if missing
 try:
@@ -26,6 +27,30 @@ from src.detection import ArucoDetector
 env_path = Path(".env")
 load_dotenv(dotenv_path=env_path)
 
+def parse_float_array_env(name, default=None, sep=None, dtype=np.float64, shape=None):
+    """
+    Parse a float array environment variable with a default fallback.
+    """
+    v = os.getenv(name)
+    if v is None:
+        if default is None:
+            return None
+        arr = np.array(default, dtype=dtype)
+        return arr.reshape(shape) if shape is not None else arr
+
+    try:
+        parts = v.split(sep) if sep is not None else v.split()
+        nums = [float(x) for x in parts if x != ""]
+        arr = np.array(nums, dtype=dtype)
+        if shape is not None:
+            arr = arr.reshape(shape)
+        return arr
+    except Exception:
+        if default is None:
+            raise
+        arr = np.array(default, dtype=dtype)
+        return arr.reshape(shape) if shape is not None else arr
+
 def parse_int_env(name, default=None):
     """
     Parse an integer environment variable with a default fallback.
@@ -47,6 +72,13 @@ MAX_IMAGE = parse_int_env("MAX_IMAGE", 50)
 # optional requested resolution from env
 CAMERA_WIDTH = parse_int_env("CAMERA_WIDTH", None)
 CAMERA_HEIGHT = parse_int_env("CAMERA_HEIGHT", None)
+DIST_COEFFS = parse_float_array_env("DIST_COEFFS", default=None, shape=(5,))
+CAMERA_MATRIX = parse_float_array_env("CAMERA_MATRIX", default=None, shape=(3, 3))
+
+CHESSBOARD_ROWS = parse_int_env("CHESSBOARD_ROWS", 6)
+CHESSBOARD_COLS = parse_int_env("CHESSBOARD_COLS", 9)
+SQUARE_SIZE_CM = float(os.getenv("SQUARE_SIZE_CM") or "1.0")
+NUM_CALIB_IMAGES = parse_int_env("NUM_CALIB_IMAGES", 20)
 
 # parse camera id (try int, else keep as string path)
 try:
@@ -63,9 +95,9 @@ print(f"DEBUG: IMAGE_DIR={IMAGE_DIR}, IMAGE_EXT={IMAGE_EXT}, CAMERA_ID={CAMERA_I
 def calibrate_camera():
     camera = Camera(CAMERA_ID, IMAGE_DIR, IMAGE_EXT, width=CAMERA_WIDTH, height=CAMERA_HEIGHT)
     camera_matrix, dist_coeffs, rvecs, tvecs = camera.get_dist_coeffs(
-        chessboard_size=(17, 10),
-        square_size=1.0,
-        num_images=20
+        chessboard_size=(CHESSBOARD_COLS, CHESSBOARD_ROWS),
+        square_size=SQUARE_SIZE_CM,
+        num_images=NUM_CALIB_IMAGES
     )
 
     if camera_matrix is not None:
@@ -85,7 +117,7 @@ def update_in_real_time():
 
     # init camera
     camera = Camera(CAMERA_ID, IMAGE_DIR, IMAGE_EXT, width=CAMERA_WIDTH, height=CAMERA_HEIGHT)
-    detector = ArucoDetector(camera, MARKER_SIZE_CM, camera_matrix=None, dist_coeffs=None, assumed_hfov_deg=ASSUMED_HFOV_DEG)
+    detector = ArucoDetector(camera, MARKER_SIZE_CM, camera_matrix=CAMERA_MATRIX, dist_coeffs=DIST_COEFFS, assumed_hfov_deg=ASSUMED_HFOV_DEG)
 
     try:
         if not camera.is_opened():
@@ -118,5 +150,5 @@ def update_in_real_time():
         clear_image_folder(IMAGE_DIR)
 
 if __name__ == "__main__":
-    #update_in_real_time()
-    calibrate_camera()
+    update_in_real_time()
+    #calibrate_camera()
