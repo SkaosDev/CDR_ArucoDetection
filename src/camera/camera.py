@@ -1,6 +1,7 @@
 import cv2
 import os
 import time
+import numpy as np
 from typing import Optional, Tuple, List
 
 class Camera:
@@ -190,6 +191,89 @@ class Camera:
         file_path = os.path.join(self.image_dir, f"{file_id}.{self.file_ext}")
         cv2.imwrite(file_path, frame)
         return file_path
+
+    def get_dist_coeffs(self, chessboard_size: Tuple[int, int] = (9, 6), square_size: float = 1.0,
+                        num_images: int = 20):
+        """
+        Calibrate camera using chessboard images to calculate distortion coefficients.
+
+        Args:
+            chessboard_size: Number of internal corners (columns, rows)
+            square_size: Size of a square in your defined unit (e.g., millimeters)
+            num_images: Number of images to capture for calibration
+
+        Returns:
+            tuple: (camera_matrix, dist_coeffs, rvecs, tvecs) or None on error
+        """
+        if not self.is_opened():
+            print("Error: camera not opened")
+            return None, None, None, None
+
+        # Prepare object points
+        objp = np.zeros((chessboard_size[0] * chessboard_size[1], 3), np.float32)
+        objp[:, :2] = np.mgrid[0:chessboard_size[0], 0:chessboard_size[1]].T.reshape(-1, 2)
+        objp *= square_size
+
+        objpoints = []
+        imgpoints = []
+
+        print(f"Capturing {num_images} images for calibration. Press 'c' to capture, 'q' to finish.")
+
+        captured = 0
+        frame_shape = None
+
+        while captured < num_images:
+            ret, frame = self.cam.read()
+            if not ret:
+                continue
+
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            frame_shape = gray.shape[::-1]
+
+            ret_chess, corners = cv2.findChessboardCorners(gray, chessboard_size, None)
+
+            display_frame = frame.copy()
+            if ret_chess:
+                cv2.drawChessboardCorners(display_frame, chessboard_size, corners, ret_chess)
+                cv2.putText(display_frame, f"Pattern found! Press 'c' to capture ({captured}/{num_images})",
+                            (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+            else:
+                cv2.putText(display_frame, "No pattern detected",
+                            (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+
+            cv2.imshow('Calibration', display_frame)
+            key = cv2.waitKey(1) & 0xFF
+
+            if key == ord('c') and ret_chess:
+                criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001)
+                corners2 = cv2.cornerSubPix(gray, corners, (11, 11), (-1, -1), criteria)
+
+                objpoints.append(objp)
+                imgpoints.append(corners2)
+                captured += 1
+                print(f"Image {captured}/{num_images} captured")
+            elif key == ord('q'):
+                break
+
+        cv2.destroyAllWindows()
+
+        if captured < 3:
+            print("Error: need at least 3 images for calibration")
+            return None, None, None, None
+
+        print("Calibrating camera...")
+        ret, camera_matrix, dist_coeffs, rvecs, tvecs = cv2.calibrateCamera(
+            objpoints, imgpoints, frame_shape, None, None
+        )
+
+        if ret:
+            print("Calibration successful!")
+            print(f"Camera matrix:\n{camera_matrix}")
+            print(f"Distortion coefficients: {dist_coeffs.ravel()}")
+            return camera_matrix, dist_coeffs, rvecs, tvecs
+        else:
+            print("Calibration failed")
+            return None, None, None, None
 
     def release(self):
         """

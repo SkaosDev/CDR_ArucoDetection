@@ -59,6 +59,21 @@ ASSUMED_HFOV_DEG = float(os.getenv("ASSUMED_HFOV_DEG") or "90.0")
 
 print(f"DEBUG: IMAGE_DIR={IMAGE_DIR}, IMAGE_EXT={IMAGE_EXT}, CAMERA_ID={CAMERA_ID}, MAX_IMAGE={MAX_IMAGE}, WIDTH={CAMERA_WIDTH}, HEIGHT={CAMERA_HEIGHT}, MARKER_SIZE_CM={MARKER_SIZE_CM}, HFOV={ASSUMED_HFOV_DEG}")
 
+
+def calibrate_camera():
+    camera = Camera(CAMERA_ID, IMAGE_DIR, IMAGE_EXT, width=CAMERA_WIDTH, height=CAMERA_HEIGHT)
+    camera_matrix, dist_coeffs, rvecs, tvecs = camera.get_dist_coeffs(
+        chessboard_size=(17, 10),
+        square_size=1.0,
+        num_images=20
+    )
+
+    if camera_matrix is not None:
+        print("Calibration completed successfully")
+    else:
+        print("Calibration failed")
+
+
 def update_in_real_time():
     """
     Capture images from camera in real-time, analyze them for Aruco markers,
@@ -103,4 +118,5 @@ def update_in_real_time():
         clear_image_folder(IMAGE_DIR)
 
 if __name__ == "__main__":
-    update_in_real_time()
+    #update_in_real_time()
+    calibrate_camera()
