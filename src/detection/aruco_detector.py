@@ -1,6 +1,13 @@
 import cv2
 import numpy as np
 import math
+import matplotlib
+
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
+import matplotlib.patches as patches
+import matplotlib.lines as mlines
 
 
 class ArucoDetector:
@@ -12,12 +19,14 @@ class ArucoDetector:
         self.dist_coeffs = dist_coeffs
         self.assumed_hfov_deg = float(assumed_hfov_deg)
 
-        # Initialisation unique du dictionnaire ArUco
-        self.aruco_dict = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_6X6_250)
+        self._arena_fig = None
+        self._arena_ax = None
+        self._arena_canvas = None
+
+        self.aruco_dict = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_100)
         self.aruco_params = cv2.aruco.DetectorParameters()
         self.detector = cv2.aruco.ArucoDetector(self.aruco_dict, self.aruco_params)
 
-        # Estimation de la matrice caméra si non fournie
         if self.camera_matrix is None:
             w, h = self.cam.get_resolution()
             if w and h:
@@ -27,36 +36,343 @@ class ArucoDetector:
                                                [0.0, 0.0, 1.0]], dtype=np.float64)
                 self.dist_coeffs = np.zeros((5, 1), dtype=np.float64) if self.dist_coeffs is None else self.dist_coeffs
 
-        # Objets 3D du marqueur (réutilisable)
-        s = self.marker_size_m
-        self.objp = np.array([[-s / 2, s / 2, 0.0], [s / 2, s / 2, 0.0],
-                              [s / 2, -s / 2, 0.0], [-s / 2, -s / 2, 0.0]], dtype=np.float64)
+        # Points 3D du marqueur pour solvePnP
+        s = self.marker_size_m / 2.0
+        self.objp = np.array([[-s, -s, 0.0], [s, -s, 0.0],
+                              [s, s, 0.0], [-s, s, 0.0]], dtype=np.float64)
 
-    def analyze_frame(self, frame):
+        # Positions de référence en mètres (centre des marqueurs)
+        self.ref_markers_world = {
+            20: np.array([0.600, 1.400]),  # Sans Z
+            21: np.array([2.400, 1.400]),
+            22: np.array([0.600, 0.600]),
+            23: np.array([2.400, 0.600]),
+        }
+
+        # Matrices de transformation
+        self.homography_matrix = None
+        self.affine_matrix = None
+        self.transform_computed = False
+        self.transform_type = None
+
+        self.last_seen_refs = {}
+        self.ref_cache_timeout = 20.0
+
+    def convert_world_coords_mm(self, pos_world):
+        x_mm = int(round(float(pos_world[0]) * 1000.0))
+        y_mm = int(round(float(pos_world[1]) * 1000.0))
+        return f"{x_mm},{y_mm}"
+
+    def convert_id_to_name(self, marker_id: int) -> str:
+        if not isinstance(marker_id, int):
+            return "ID invalide"
+
+        if 1 <= marker_id <= 5:
+            return "Equipe Bleue"
+        elif 6 <= marker_id <= 10:
+            return "Equipe Jaune"
+        elif marker_id == 20:
+            return "Aire de jeu 600, 1400"
+        elif marker_id == 21:
+            return "Aire de jeu 2400, 1400"
+        elif marker_id == 22:
+            return "Aire de jeu 600, 600"
+        elif marker_id == 23:
+            return "Aire de jeu 2400, 600"
+        elif marker_id == 36:
+            return "Caisse bleue"
+        elif marker_id == 47:
+            return "Caisse jaune"
+        elif marker_id == 41:
+            return "Caisse vide"
+        elif 11 <= marker_id <= 50:
+            return "Aire de jeu et elements"
+        elif 51 <= marker_id <= 70:
+            return "Reserves Equipe Bleue"
+        elif 71 <= marker_id <= 90:
+            return "Reserves Equipe Jaune"
+
+        return "ID invalide"
+
+    def compute_transform_from_refs(self, corners, ids, use_cache=True):
+        """
+        Calcule la transformation image -> monde.
+        Nécessite au moins 3 références (peut compléter depuis un cache).
+        """
+        import time
+
+        src_points = []
+        dst_points = []
+        current_time = time.time()
+
+        # Collecte des marqueurs visibles et mise à jour du cache
+        for i, marker_id in enumerate(ids):
+            mid = int(marker_id[0])
+            if mid in self.ref_markers_world:
+                center = np.mean(corners[i][0], axis=0)
+                src_points.append(center)
+                world_pos = self.ref_markers_world[mid] * 1000.0
+                dst_points.append(world_pos)
+
+                # Met à jour le cache de visibilité
+                self.last_seen_refs[mid] = (center, current_time)
+
+        # Si pas assez de références, compléter depuis le cache valide
+        if use_cache and len(src_points) < 3:
+            for mid, world_pos_m in self.ref_markers_world.items():
+                if mid in self.last_seen_refs:
+                    cached_center, cached_time = self.last_seen_refs[mid]
+
+                    # Ignorer si le cache est expiré
+                    if current_time - cached_time <= self.ref_cache_timeout:
+                        # Ne pas dupliquer une référence déjà présente
+                        if mid not in [int(ids[i][0]) for i in range(len(ids)) if
+                                       int(ids[i][0]) in self.ref_markers_world]:
+                            src_points.append(cached_center)
+                            world_pos = world_pos_m * 1000.0
+                            dst_points.append(world_pos)
+
+                            # Limiter à 4 références
+                            if len(src_points) >= 4:
+                                break
+
+        num_refs = len(src_points)
+
+        if num_refs < 3:
+            self.transform_computed = False
+            self.transform_type = None
+            return False
+
+        src_pts = np.array(src_points, dtype=np.float32)
+        dst_pts = np.array(dst_points, dtype=np.float32)
+
+        try:
+            if num_refs >= 4:
+                self.homography_matrix, _ = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 5.0)
+                if self.homography_matrix is None:
+                    self.transform_computed = False
+                    self.transform_type = None
+                    return False
+                self.transform_type = 'homography'
+                self.affine_matrix = None
+
+            else:  # num_refs == 3
+                self.affine_matrix = cv2.getAffineTransform(src_pts, dst_pts)
+                self.transform_type = 'affine'
+                self.homography_matrix = None
+
+            self.transform_computed = True
+            return True
+
+        except Exception:
+            self.transform_computed = False
+            self.transform_type = None
+            return False
+
+    def transform_point_to_world(self, image_point):
+        """
+        Projette un point image vers les coordonnées monde (m).
+        Utilise homographie ou transformée affine selon disponibilité.
+        """
+        if not self.transform_computed:
+            return None
+
+        if self.transform_type == 'homography' and self.homography_matrix is not None:
+            # Homographie
+            pt = np.array([image_point[0], image_point[1], 1.0])
+            world_pt = self.homography_matrix @ pt
+            world_pt = world_pt[:2] / world_pt[2]
+            return world_pt / 1000.0
+
+        elif self.transform_type == 'affine' and self.affine_matrix is not None:
+            # Affine
+            pt = np.array([image_point[0], image_point[1], 1.0])
+            world_pt = self.affine_matrix @ pt
+            return world_pt / 1000.0
+
+        return None
+
+    def _init_arena_plot(self, arena_size_mm=(3000, 2000)):
+        ARENA_W, ARENA_H = int(arena_size_mm[0]), int(arena_size_mm[1])
+
+        self._arena_fig = plt.figure(figsize=(10, 7), dpi=100)
+        self._arena_ax = self._arena_fig.add_subplot(1, 1, 1)
+        self._arena_ax.set_xlim(0, ARENA_W)
+        self._arena_ax.set_ylim(0, ARENA_H)
+        self._arena_ax.set_aspect('equal')
+        self._arena_ax.set_xlabel("X (mm)")
+        self._arena_ax.set_ylabel("Y (mm)")
+        self._arena_ax.set_title(f"Arène {ARENA_W}x{ARENA_H} mm - ArUco (Homography Method)")
+        self._arena_ax.grid(True, linestyle='--', alpha=0.25)
+
+        rect = patches.Rectangle((0, 0), ARENA_W, ARENA_H, linewidth=2,
+                                 edgecolor='black', facecolor='none')
+        self._arena_ax.add_patch(rect)
+
+        plt.tight_layout()
+        self._arena_canvas = FigureCanvas(self._arena_fig)
+
+    def update_arena_display(self, detected_world=None, marker_size_mm=200.0,
+                             arrow_len_mm=300.0, window_name="Arena"):
+        if self._arena_fig is None:
+            self._init_arena_plot()
+
+        detected_world = detected_world or {}
+
+        self._arena_ax.clear()
+
+        ARENA_W, ARENA_H = 3000, 2000
+        self._arena_ax.set_xlim(0, ARENA_W)
+        self._arena_ax.set_ylim(0, ARENA_H)
+        self._arena_ax.set_aspect('equal')
+        self._arena_ax.set_xlabel("X (mm)")
+        self._arena_ax.set_ylabel("Y (mm)")
+        self._arena_ax.set_title(f"Arène {ARENA_W}x{ARENA_H} mm - ArUco (Homography)")
+        self._arena_ax.grid(True, linestyle='--', alpha=0.25)
+
+        rect = patches.Rectangle((0, 0), ARENA_W, ARENA_H, linewidth=2,
+                                 edgecolor='black', facecolor='none')
+        self._arena_ax.add_patch(rect)
+
+        for mid, pos_m in self.ref_markers_world.items():
+            x_mm = float(pos_m[0]) * 1000.0
+            y_mm = float(pos_m[1]) * 1000.0
+            circle = patches.Circle((x_mm, y_mm), 80, color='red', fill=False,
+                                    linewidth=2, linestyle='--')
+            self._arena_ax.add_patch(circle)
+            self._arena_ax.text(x_mm, y_mm - 120, f"Ref {mid} théorique",
+                                ha='center', fontsize=8, color='red')
+
+        cmap = plt.get_cmap('tab10')
+        legend_handles = []
+
+        for idx, (mid, (pos_m, yaw)) in enumerate(detected_world.items()):
+            if mid in self.ref_markers_world:
+                color = 'green'
+                alpha = 0.6
+            else:
+                color = cmap(idx % 10)
+                alpha = 0.9
+
+            x_mm = float(pos_m[0]) * 1000.0
+            y_mm = float(pos_m[1]) * 1000.0
+
+            if x_mm < -500 or x_mm > ARENA_W + 500 or y_mm < -500 or y_mm > ARENA_H + 500:
+                continue
+
+            s = marker_size_mm * 0.6
+            lower_left = (x_mm - s / 2.0, y_mm - s / 2.0)
+            square = patches.Rectangle(lower_left, s, s, linewidth=1,
+                                       edgecolor='k', facecolor=color, alpha=alpha)
+            self._arena_ax.add_patch(square)
+
+            dx = math.cos(yaw) * arrow_len_mm
+            dy = math.sin(yaw) * arrow_len_mm
+            self._arena_ax.arrow(x_mm, y_mm, dx, dy, head_width=60, head_length=60,
+                                 fc='k', ec='k', length_includes_head=True)
+
+            name = self.convert_id_to_name(mid)
+            self._arena_ax.text(x_mm + s / 2 + 6, y_mm - s / 2 - 3,
+                                f"{mid}: {name}\n({x_mm:.0f}, {y_mm:.0f})",
+                                fontsize=9, color='black', verticalalignment='bottom')
+
+            handle = mlines.Line2D([], [], marker='s', color='w',
+                                   markerfacecolor=color, markersize=8,
+                                   label=f"{mid}: {name}")
+            legend_handles.append(handle)
+
+        if legend_handles:
+            self._arena_ax.legend(handles=legend_handles, loc='center left',
+                                  bbox_to_anchor=(1.01, 0.5), frameon=True, fontsize=9)
+
+        try:
+            self._arena_canvas.draw()
+            buf = self._arena_canvas.buffer_rgba()
+            img_rgba = np.asarray(buf)
+            img_bgr = cv2.cvtColor(img_rgba, cv2.COLOR_RGBA2BGR)
+            img_bgr = np.ascontiguousarray(img_bgr)
+            cv2.imshow(window_name, img_bgr)
+        except Exception:
+            pass
+
+    def analyze_frame(self, frame, show_arena=True, arena_window_name="Arena"):
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+
+        # détecte et trace, calcule la transform (cache autorisé)
         corners, ids, _ = self.detector.detectMarkers(gray)
 
         if ids is None or len(ids) == 0:
+            if show_arena:
+                self.update_arena_display(detected_world={}, window_name=arena_window_name)
             return frame
 
         cv2.aruco.drawDetectedMarkers(frame, corners, ids)
+        self.compute_transform_from_refs(corners, ids, use_cache=True)  # Activer le cache
 
-        if self.camera_matrix is not None:
+        detected_world = {}
+
+        if self.transform_computed:
             for i in range(len(ids)):
-                imgp = corners[i][0].astype(np.float64)
-                _, rvec, tvec = cv2.solvePnP(self.objp, imgp, self.camera_matrix,
-                                             self.dist_coeffs, flags=cv2.SOLVEPNP_IPPE_SQUARE)
+                mid = int(ids[i][0])
+                name = self.convert_id_to_name(mid)
 
-                dist_cm = float(np.linalg.norm(tvec)) * 100.0
+                center_img = np.mean(corners[i][0], axis=0)
+                center_display = center_img.astype(int)
 
-                try:
-                    cv2.aruco.drawAxis(frame, self.camera_matrix, self.dist_coeffs,
-                                       rvec, tvec, self.marker_size_m * 0.5)
-                except Exception:
-                    pass
+                pos_world = self.transform_point_to_world(center_img)
 
+                if pos_world is not None:
+                    corner0_world = self.transform_point_to_world(corners[i][0][0])
+                    corner1_world = self.transform_point_to_world(corners[i][0][1])
+
+                    if corner0_world is not None and corner1_world is not None:
+                        vec_world = corner1_world - corner0_world
+                        yaw = math.atan2(vec_world[1], vec_world[0]) + math.pi / 2.0
+
+                        while yaw > math.pi:
+                            yaw -= 2 * math.pi
+                        while yaw < -math.pi:
+                            yaw += 2 * math.pi
+                    else:
+                        yaw = 0.0
+
+                    coord_str = self.convert_world_coords_mm(pos_world)
+
+                    # Indiquer si on utilise des données en cache
+                    cache_indicator = ""
+                    if mid in self.ref_markers_world:
+                        visible_refs = [int(ids[j][0]) for j in range(len(ids)) if
+                                        int(ids[j][0]) in self.ref_markers_world]
+                        if len(visible_refs) < 3:
+                            cache_indicator = " (cache)"
+
+                    cv2.putText(frame, coord_str + cache_indicator,
+                                (center_display[0] - 50, center_display[1] + 12),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.45, (10, 180, 10), 2)
+                    cv2.putText(frame, f"{math.degrees(yaw):.1f}deg",
+                                (center_display[0] - 50, center_display[1] + 26),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.45, (10, 180, 10), 2)
+                    cv2.putText(frame, f"{name}",
+                                (center_display[0] - 50, center_display[1] - 25),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 150), 2)
+
+                    detected_world[mid] = (pos_world, yaw)
+        else:
+            for i in range(len(ids)):
+                mid = int(ids[i][0])
+                name = self.convert_id_to_name(mid)
                 center = np.mean(corners[i][0], axis=0).astype(int)
-                cv2.putText(frame, f"{dist_cm:.1f} cm", (center[0] - 50, center[1] - 10),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 255), 2)
+                cv2.putText(frame, f"{name}", (center[0] - 50, center[1] - 10),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
+                cv2.putText(frame, "Need refs (min 3)", (center[0] - 60, center[1] + 10),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 255), 2)
+
+        if show_arena:
+            try:
+                self.update_arena_display(detected_world=detected_world,
+                                          window_name=arena_window_name)
+            except Exception:
+                pass
 
         return frame
+

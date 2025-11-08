@@ -53,7 +53,6 @@ CHESSBOARD_COLS = parse_int("CHESSBOARD_COLS", 9)
 SQUARE_SIZE_CM = float(os.getenv("SQUARE_SIZE_CM", "1.0"))
 NUM_CALIB_IMAGES = parse_int("NUM_CALIB_IMAGES", 20)
 
-
 def calibrate_camera():
     camera = Camera(CAMERA_ID, width=CAMERA_WIDTH, height=CAMERA_HEIGHT)
     if not camera.is_opened():
@@ -92,6 +91,7 @@ def update_in_real_time():
 
     print(f"Caméra: {camera.get_camera_info()}")
     cv2.namedWindow("ArUco Detection", cv2.WINDOW_NORMAL)
+    cv2.namedWindow("Arena", cv2.WINDOW_NORMAL)
 
     try:
         while True:
@@ -99,12 +99,16 @@ def update_in_real_time():
             if frame is None:
                 continue
 
-            annotated_frame = detector.analyze_frame(frame)
+            annotated_frame = detector.analyze_frame(frame, show_arena=True, arena_window_name="Arena")
             cv2.imshow("ArUco Detection", annotated_frame)
 
             if cv2.waitKey(1) & 0xFF in (27, ord('q')):
                 break
     finally:
+        # nettoyer les ressources matplotlib
+        if detector._arena_fig is not None:
+            import matplotlib.pyplot as plt
+            plt.close(detector._arena_fig)
         camera.release()
         cv2.destroyAllWindows()
 
