@@ -202,7 +202,7 @@ class ArucoDetector:
         self._arena_ax.set_aspect('equal')
         self._arena_ax.set_xlabel("X (mm)")
         self._arena_ax.set_ylabel("Y (mm)")
-        self._arena_ax.set_title(f"Arène {ARENA_W}x{ARENA_H} mm - ArUco (Homography Method)")
+        self._arena_ax.set_title(f"Arène {ARENA_W}x{ARENA_H} mm - ArUco")
         self._arena_ax.grid(True, linestyle='--', alpha=0.25)
 
         rect = patches.Rectangle((0, 0), ARENA_W, ARENA_H, linewidth=2,
@@ -227,7 +227,7 @@ class ArucoDetector:
         self._arena_ax.set_aspect('equal')
         self._arena_ax.set_xlabel("X (mm)")
         self._arena_ax.set_ylabel("Y (mm)")
-        self._arena_ax.set_title(f"Arène {ARENA_W}x{ARENA_H} mm - ArUco (Homography)")
+        self._arena_ax.set_title(f"Arène {ARENA_W}x{ARENA_H} mm - ArUco")
         self._arena_ax.grid(True, linestyle='--', alpha=0.25)
 
         rect = patches.Rectangle((0, 0), ARENA_W, ARENA_H, linewidth=2,
@@ -240,8 +240,6 @@ class ArucoDetector:
             circle = patches.Circle((x_mm, y_mm), 80, color='red', fill=False,
                                     linewidth=2, linestyle='--')
             self._arena_ax.add_patch(circle)
-            self._arena_ax.text(x_mm, y_mm - 120, f"Ref {mid} théorique",
-                                ha='center', fontsize=8, color='red')
 
         cmap = plt.get_cmap('tab10')
         legend_handles = []
