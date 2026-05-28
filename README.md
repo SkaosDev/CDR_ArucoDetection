@@ -1,3 +1,7 @@
+# Ancienne version !
+Vous pouvez retrouver la dernière version du code directement sur le code de la CDR de DaVinciBot : https://github.com/DaVinciBot/CoupeDeRobotique
+
+
 # 🤖 ArUco Detection – DavinciBot CDR
 
 Projet de test pour la **détection de tags ArUco** et l’expérimentation du **calcul déporté** dans le cadre de la **Coupe de France de Robotique (Eurobot)** avec l’équipe **DavinciBot** de l’**ESILV**.
